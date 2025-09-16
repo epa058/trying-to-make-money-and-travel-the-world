@@ -42,6 +42,7 @@ class Blackjack:
             7: {v: 'H' for v in range(2, 12)},
             6:  {v: 'H' for v in range(2, 12)},
             5: {v: 'H' for v in range(2, 12)},
+            4: {v: 'H' for v in range(2, 12)},
         }
         self.strategy_soft = {
             # Ace is counted as 11
@@ -76,11 +77,14 @@ class Blackjack:
         random.shuffle(self.deck)
 
     def deal_card(self):
+        if not self.deck or len(self.deck) < 52:
+            print("--- Reshuffling the shoe ---")
+            self.create_deck()
         return self.deck.pop()
 
     def get_hand_value(self, hand):
         """
-        Calculates the value of a hand, handling Aces correctly.
+        Calculates the value of a hand, handles Aces correctly.
         is_soft is True if an Ace is counted as 11.
         """
         value = 0
@@ -96,7 +100,6 @@ class Blackjack:
             value -= 10
             num_aces -= 1
         
-        # After de-valuing aces, if there are no aces left counted as 11, it's a hard hand.
         if num_aces == 0:
             is_soft = False
 
@@ -105,35 +108,31 @@ class Blackjack:
     def is_pair(self, hand):
         return len(hand) == 2 and hand[0]['rank'] == hand[1]['rank']
 
-    def get_basic_strategy_move(self, player_hand, dealer_upcard, can_double_down):
+    def get_basic_strategy_move(self, player_hand, dealer_upcard, can_double_down, allow_split=True):
         player_value, is_soft = self.get_hand_value(player_hand)
         dealer_value = self.card_values[dealer_upcard['rank']]
+        
+        move = "Error"
 
-        if self.is_pair(player_hand):
+        if allow_split and self.is_pair(player_hand):
             pair_rank = player_hand[0]['rank']
             if pair_rank in ['J', 'Q', 'K', '10']:
-                 return self.strategy_pairs[10][dealer_value]        
-            if pair_rank == 'A':
-                 return self.strategy_pairs[pair_rank][dealer_value]
+                move = self.strategy_pairs[10][dealer_value]
+            elif pair_rank == 'A':
+                move = self.strategy_pairs['A'][dealer_value]
             else:
-                 return self.strategy_pairs[int(pair_rank)][dealer_value]
+                move = self.strategy_pairs[int(pair_rank)][dealer_value]
 
-        if is_soft:
-            if player_value not in self.strategy_soft:
-                 move = self.strategy_hard[player_value][dealer_value]
-            else:
-                 move = self.strategy_soft[player_value][dealer_value]
+        elif is_soft:
+            move = self.strategy_soft.get(player_value, self.strategy_hard.get(player_value, 'H'))[dealer_value]
 
-        # Hard total
-        else:
-            move = self.strategy_hard[player_value][dealer_value]
+        else: # Hard total
+            if player_value > 21: return 'S' 
+            move = self.strategy_hard.get(player_value, 'S' if player_value > 16 else 'H')[dealer_value]
 
-        # Handle the "Double Down" logic
-        if move == 'D' and not can_double_down:
-            return 'H'
-        if move == 'DS' and not can_double_down:
-            return 'S'
-        
+        if move == 'D' and not can_double_down: return 'H'
+        if move == 'DS' and not can_double_down: return 'S'
+
         return move
     
     def _format_hand(self, hand):
@@ -151,21 +150,16 @@ class Blackjack:
         print("-" * 30)
         print(f"Hand #{self.hands_played}")
 
-        if not self.deck or len(self.deck) < 52:
-            self.create_deck()
-
-        player_hand = []
-        dealer_hand = []
-
+        player_hand, dealer_hand = [], []
         player_hand.append(self.deal_card())
         dealer_hand.append(self.deal_card())
         player_hand.append(self.deal_card())
         dealer_hand.append(self.deal_card())
         
         dealer_upcard = dealer_hand[0]
-
         player_score, _ = self.get_hand_value(player_hand)
         dealer_score, _ = self.get_hand_value(dealer_hand)
+
         print(f"Player's Hand: [{self._format_hand(player_hand)}] ({player_score})")
         print(f"Dealer's Upcard: [{dealer_upcard['rank']}]")
 
@@ -183,81 +177,67 @@ class Blackjack:
         # Player's Turn
         player_hands = [player_hand]
         final_player_scores = []
-        
         i = 0
         num_splits = 0
         has_split_aces = False
 
         while i < len(player_hands):
             current_hand = player_hands[i]
-
-            # Splitting Logic
-            can_split = self.is_pair(current_hand)
-            if can_split:
-                move = self.get_basic_strategy_move(current_hand, dealer_upcard, True)
+            hand_label = f"Hand {i+1}" if (len(player_hands) > 1) else "Player"
+            initial_move = self.get_basic_strategy_move(current_hand, dealer_upcard, True, allow_split=True)
+            
+            if initial_move == 'P':
                 is_ace_pair = current_hand[0]['rank'] == 'A'
 
-                if move == 'P':
-                    if is_ace_pair and not has_split_aces:
-                        print(f"  > Splitting Aces...")
-                        has_split_aces = True
-                        num_splits += 1
-                        self.hands_played += 1
-                            
-                        # Create two new hands, each with one new card
-                        hand1 = [current_hand[0], self.deal_card()]
-                        hand2 = [current_hand[1], self.deal_card()]
-                            
-                        # Aces cannot be hit again, so their play is over.
-                        final_player_scores.append(self.get_hand_value(hand1)[0])
-                        final_player_scores.append(self.get_hand_value(hand2)[0])
-                        print(f"    Ace Hand 1 final: [{self._format_hand(hand1)}] ({final_player_scores[-2]})")
-                        print(f"    Ace Hand 2 final: [{self._format_hand(hand2)}] ({final_player_scores[-1]})")
+                if is_ace_pair and not has_split_aces:
+                    print(f"  > Splitting Aces...")
+                    has_split_aces = True
+                    self.hands_played += 1
+                    hand1 = [current_hand[0], self.deal_card()]
+                    hand2 = [current_hand[1], self.deal_card()]
+                    final_player_scores.append(self.get_hand_value(hand1)[0])
+                    final_player_scores.append(self.get_hand_value(hand2)[0])
+                    print(f"    Ace Hand 1 final: [{self._format_hand(hand1)}] ({final_player_scores[-2]})")
+                    print(f"    Ace Hand 2 final: [{self._format_hand(hand2)}] ({final_player_scores[-1]})")
+                    player_hands.pop(i)
+                    continue 
 
-                        player_hands.pop(i) # Remove the original pair
-                        continue # Go to next hand in the list, if any
+                elif not is_ace_pair and len(player_hands) < 4:
+                    print(f"  > Splitting {current_hand[0]['rank']}s...")
+                    self.hands_played += 1
+                    player_hands.pop(i)
+                    hand1 = [current_hand[0], self.deal_card()]
+                    hand2 = [current_hand[1], self.deal_card()]
+                    print(f"    New Hand created: [{self._format_hand(hand1)}]")
+                    print(f"    New Hand created: [{self._format_hand(hand2)}]")
+                    player_hands.insert(i, hand2) 
+                    player_hands.insert(i, hand1)
+                    continue
 
-                    elif not is_ace_pair and num_splits < 3:
-                        print(f"  > Splitting {current_hand[0]['rank']}s...")
-                        num_splits += 1
-                        self.hands_played += 1
-                            
-                        player_hands.pop(i) # Remove original pair
-                        hand1 = [current_hand[0], self.deal_card()]
-                        hand2 = [current_hand[1], self.deal_card()]
-                        player_hands.insert(i, hand1)
-                        player_hands.insert(i, hand2) # Insert at same spot to process next
-                        continue
-                    
-            # Hit/Stand/Double
-            can_double_down = True
-            hand_label = f"Hand {i+1}" if (num_splits > 0 or len(player_hands) > 1) else "Player"
-
-            while True:
+            while True: 
                 player_score, _ = self.get_hand_value(current_hand)
                 if player_score >= 21:
                     break
                 
-                move = self.get_basic_strategy_move(current_hand, dealer_upcard, can_double_down)
+                can_double_down = len(current_hand) == 2
+                move = self.get_basic_strategy_move(current_hand, dealer_upcard, can_double_down, allow_split=False)
+            
                 print(f" > {hand_label} [{self._format_hand(current_hand)}] ({player_score}) strategy: {move}")
-
+                
                 if move == 'S':
                     break
                 
                 if move in ['D', 'DS']:
                     current_hand.append(self.deal_card())
-                    print(f"{hand_label} doubles down, gets {current_hand[-1]['rank']}.")
-                    break # Doubling down means you only get one more card
+                    print(f"    {hand_label} doubles down, gets {current_hand[-1]['rank']}.")
+                    break
 
                 if move == 'H':
                     current_hand.append(self.deal_card())
-                    print(f"{hand_label} hits: [{self._format_hand(current_hand)}] ({self.get_hand_value(current_hand)[0]})")
-                
-                # You can only double down on the first move
-                can_double_down = False
-
+                    print(f"    {hand_label} hits: [{self._format_hand(current_hand)}] ({self.get_hand_value(current_hand)[0]})")
+            
             final_score = self.get_hand_value(current_hand)[0]
-            print(f" > {hand_label} stands with: [{self._format_hand(current_hand)}] ({final_score})")
+            print(f" > {hand_label} final score: [{self._format_hand(current_hand)}] ({final_score})")
             final_player_scores.append(final_score)
             i += 1
 
@@ -294,5 +274,5 @@ if __name__ == "__main__":
     blackjack_bot = Blackjack(num_decks=8)
     
 # Play
-    for _ in range(100):
+    for _ in range(10000):
         blackjack_bot.play_hand()
